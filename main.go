@@ -23,7 +23,6 @@ func main() {
 	vc, err := gocv.VideoCaptureFile(mp4Filename)
 	if err != nil {
 		panic(err)
-		return
 	}
 	defer vc.Close()
 
@@ -38,10 +37,7 @@ func main() {
 	err = os.MkdirAll(path, os.ModePerm)
 	if err != nil {
 		panic(err)
-		return
 	}
-
-	//f, _ := os.Open("./h264.mp4")
 
 	var svcEncoder *C.ISVCEncoder
 	errCode := C.WelsCreateSVCEncoder(&svcEncoder)
@@ -64,14 +60,11 @@ func main() {
 	writer, err := gocv.VideoWriterFile("h264.mp4", "avc1", fps, width, height, true)
 	if err != nil {
 		panic(err)
-		return
 	}
 	defer writer.Close()
 
-	var index = 0
-	for ; ; index++ {
+	for {
 		mat := gocv.NewMat()
-		//defer mat.Close()
 		if ok := vc.Read(&mat); !ok {
 			return
 		}
@@ -83,7 +76,7 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
-		yuvMat := gocv.NewMatWithSize(height*3/2, width, mat.Type())
+		yuvMat := gocv.NewMatWithSize(height, width, mat.Type())
 		gocv.CvtColor(mat, &yuvMat, gocv.ColorBGRToYUV)
 
 		var srcPic C.SSourcePicture
@@ -94,8 +87,6 @@ func main() {
 		srcPic.iStride[0] = C.int(yuv.YStride)
 		srcPic.iStride[1] = C.int(yuv.CStride)
 		srcPic.iStride[2] = C.int(yuv.CStride)
-		//bytes := yuvMat.ToBytes()
-		//ptrUint8, err := yuvMat.DataPtrUint8()
 		srcPic.pData[0] = (*C.uchar)(C.CBytes(yuv.Y))
 		srcPic.pData[1] = (*C.uchar)(C.CBytes(yuv.Cb))
 		srcPic.pData[2] = (*C.uchar)(C.CBytes(yuv.Cr))
@@ -115,7 +106,7 @@ func main() {
 				nalLen := int(*layer.pNalLengthInByte)
 				data := C.GoBytes(unsafe.Pointer(layer.pBsBuf), C.int(nalLen))
 				d = append(d, data...)
-				//imDecode, err := gocv.IMDecode(data, gocv.IMReadUnchanged)
+				//imDecode, err := gocv.IMDecode(data, gocv.IMReadAnyColor)
 				//if err != nil {
 				//	panic(err)
 				//}
@@ -125,70 +116,14 @@ func main() {
 				//}
 			}
 		}
-		//f.Write(d)
-		imDecode, err := gocv.IMDecode(d, gocv.IMReadAnyColor|gocv.IMReadAnyDepth)
+
+		imDecode, err := gocv.IMDecode(d, gocv.IMReadAnyColor)
 		if err != nil {
 			panic(err)
 		}
-		fmt.Println(imDecode.Rows())
 		err = writer.Write(imDecode)
 		if err != nil {
 			panic(err)
 		}
 	}
-}
-
-func getYUVStride(yuvImage gocv.Mat) (int, int, int) {
-	yStride := yuvImage.Step()
-	var uStride, vStride int
-
-	// 如果图像不是标准的YUV 4:2:0格式，则需要根据实际情况进行调整
-	t := yuvImage.Type()
-	if t == gocv.MatTypeCV8UC2 || t == gocv.MatTypeCV16UC2 || t == gocv.MatTypeCV16SC2 {
-		// YUV 4:2:2格式，U和V通道的stride是Y通道stride的1/2
-		uStride = yStride / 2
-		vStride = yStride / 2
-	} else if t == gocv.MatTypeCV8UC3 || t == gocv.MatTypeCV16UC3 || t == gocv.MatTypeCV16SC3 {
-		// YUV 4:4:4格式，U和V通道的stride等于Y通道stride
-		uStride = yStride
-		vStride = yStride
-	} else if t == gocv.MatTypeCV8UC4 || t == gocv.MatTypeCV16UC4 || t == gocv.MatTypeCV16SC4 {
-		// YUV 4:2:0格式，U和V通道的stride是Y通道stride的1/2
-		yStride /= 2
-		uStride = yStride / 2
-		vStride = yStride / 2
-	}
-	return yStride, uStride, vStride
-}
-
-func parseSSourceToH264Mat(inPic C.SSourcePicture) *gocv.Mat {
-	// Convert SSourcePicture to gocv.Mat
-	return sSourcePictureToH264Mat(inPic)
-}
-
-func sSourcePictureToH264Mat(inPic C.SSourcePicture) *gocv.Mat {
-	// 创建一个名为mat的Mat对象
-	mat := gocv.NewMatWithSize(int(inPic.iPicHeight)*3/2, int(inPic.iPicWidth), gocv.MatTypeCV8UC1)
-
-	// 通过循环遍历每个通道的数据，并将它们复制到mat对象中
-	for i := 0; i < 3; i++ {
-		ptrUint8, err := mat.DataPtrUint8()
-		if err != nil {
-			fmt.Println("DataPtrUint8 failed:", err)
-			return nil
-		}
-		if inPic.iStride[i] == inPic.iPicWidth {
-			// 如果stride等于宽度，则直接复制整个通道的数据
-			copy(ptrUint8[(i*int(inPic.iPicHeight)):(i*int(inPic.iPicHeight)+int(inPic.iPicHeight))], (*[1 << 30]byte)(unsafe.Pointer(inPic.pData[i]))[:])
-		} else {
-			// 如果stride不等于宽度，则按行复制数据
-			for j := 0; j < int(inPic.iPicHeight); j++ {
-				src := (*[1 << 30]byte)(unsafe.Pointer(uintptr(unsafe.Pointer(inPic.pData[i])) + uintptr(j*int(inPic.iStride[i]))))
-				dst := ptrUint8[i*int(inPic.iPicHeight)+j : i*int(inPic.iPicHeight)+j+1]
-				copy(dst, src[0:inPic.iPicWidth])
-			}
-		}
-	}
-
-	return &mat
 }
